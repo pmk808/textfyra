@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Student;
 use App\Providers\RouteServiceProvider;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
@@ -34,18 +35,45 @@ class RegisteredUserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
+            'role' => ['required', 'in:admin,student'],
+            'firstname' => ['required', 'string', 'max:255'],
+            'lastname' => ['required', 'string', 'max:255'],
+            'middlename' => ['nullable', 'string', 'max:255'],
+            'phone_number' => ['required', 'string', 'max:255'],
+            // Only validate these fields if role is student
+            'program' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
+            'school' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
+            'year_level' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
         ]);
-
+    
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
+            'is_admin' => $request->role === 'admin',
+            'firstname' => $request->firstname,
+            'lastname' => $request->lastname,
+            'middlename' => $request->middlename,
+            'phone_number' => $request->phone_number,
         ]);
-
+    
+        if ($request->role === 'student') {
+            Student::create([
+                'student_id' => $request->name,
+                'firstname' => $request->firstname,
+                'lastname' => $request->lastname,
+                'middlename' => $request->middlename,
+                'phone_number' => $request->phone_number,
+                'program' => $request->program,
+                'school' => $request->school,
+                'year_level' => $request->year_level,
+            ]);
+        }
+    
         event(new Registered($user));
-
+    
         Auth::login($user);
-
+    
         return redirect(RouteServiceProvider::HOME);
     }
 }
