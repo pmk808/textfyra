@@ -33,19 +33,23 @@ class RegisteredUserController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
             'role' => ['required', 'in:admin,student'],
             'firstname' => ['required', 'string', 'max:255'],
             'lastname' => ['required', 'string', 'max:255'],
             'middlename' => ['nullable', 'string', 'max:255'],
-            'phone_number' => ['required', 'string', 'max:255'],
-            // Only validate these fields if role is student
+            'phone_number' => [
+                'required',
+                'string',
+                'regex:/^09\d{9}$/',
+                'size:11'
+            ],
             'program' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
             'school' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
             'year_level' => ['nullable', 'string', 'max:255', 'required_if:role,student'],
         ]);
-    
+
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -56,7 +60,7 @@ class RegisteredUserController extends Controller
             'middlename' => $request->middlename,
             'phone_number' => $request->phone_number,
         ]);
-    
+
         if ($request->role === 'student') {
             Student::create([
                 'student_id' => $request->name,
@@ -69,11 +73,11 @@ class RegisteredUserController extends Controller
                 'year_level' => $request->year_level,
             ]);
         }
-    
+
         event(new Registered($user));
-    
+
         Auth::login($user);
-    
+
         return redirect(RouteServiceProvider::HOME);
     }
 }

@@ -13,6 +13,11 @@ return new class extends Migration
     {
         Schema::create('messages', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('sender_id')->constrained('users');
+            $table->string('recipient_type'); 
+            $table->string('recipient_value'); 
+            $table->text('message');
+            $table->string('status'); 
             $table->timestamps();
         });
     }
