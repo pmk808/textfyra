@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-class ItexmoService
+class ItexmoService implements SmsServiceInterface
 {
     protected $apiCode;
 
@@ -15,11 +15,11 @@ class ItexmoService
     {
         $url = 'https://www.itexmo.com/php_api/api.php';
         $itexmo = array(
-            '1' => $number, 
-            '2' => $message, 
+            '1' => $number,
+            '2' => $message,
             '3' => $this->apiCode
         );
-        
+
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_POST, 1);

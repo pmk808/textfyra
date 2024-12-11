@@ -4,86 +4,17 @@ namespace App\Http\Controllers;
 
 use App\Models\Message;
 use App\Models\Student;
-use App\Services\ItexmoService;
+use App\Services\VonageService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;  // Add this missing import
 
 class MessageController extends Controller
 {
-    protected $smsService;
+    protected $vonageService;
 
-    public function __construct(ItexmoService $smsService)
+    public function __construct(VonageService $vonageService)
     {
-        $this->smsService = $smsService;
-    }
-
-    /**
-     * Display message creation form.
-     */
-    public function create()
-    {
-
-        if (!auth()->user()->is_admin) {
-            abort(403);
-        }
-
-        $programs = Student::select('program')->distinct()->pluck('program');
-        return view('messages.create', compact('programs'));
-    }
-
-    /**
-     * Store a newly created message.
-     */
-    public function store(Request $request)
-    {
-        $request->validate([
-            'type' => 'required|in:individual,group',
-            'recipient' => 'required|string',
-            'message' => 'required|string|max:160'
-        ]);
-
-        $credits = $this->calculateSMSCredits($request->message);
-
-        if ($request->type === 'individual') {
-            $student = Student::where('student_id', $request->recipient)->first();
-            if ($student) {
-                try {
-                    $phoneNumber = $this->formatPhoneNumber($student->phone_number);
-                    $response = $this->smsService->sendSMS($phoneNumber, $request->message);
-                    
-                    Message::create([
-                        'sender_id' => auth()->id(),
-                        'recipient_type' => 'individual',
-                        'recipient_value' => $student->student_id,
-                        'message' => $request->message,
-                        'status' => $response,
-                        'credits_used' => $credits
-                    ]);
-                } catch (\InvalidArgumentException $e) {
-                    return back()->with('error', $e->getMessage());
-                }
-            }
-        } else {
-            $students = Student::where('program', $request->recipient)->get();
-            foreach ($students as $student) {
-                try {
-                    $phoneNumber = $this->formatPhoneNumber($student->phone_number);
-                    $response = $this->smsService->sendSMS($phoneNumber, $request->message);
-                    
-                    Message::create([
-                        'sender_id' => auth()->id(),
-                        'recipient_type' => 'group',
-                        'recipient_value' => $request->recipient,
-                        'message' => $request->message,
-                        'status' => $response,
-                        'credits_used' => $credits
-                    ]);
-                } catch (\InvalidArgumentException $e) {
-                    continue; 
-                }
-            }
-        }
-
-        return redirect()->back()->with('success', 'Message(s) sent successfully');
+        $this->vonageService = $vonageService;
     }
 
     /**
@@ -94,38 +25,121 @@ class MessageController extends Controller
         $messages = Message::with('sender')
             ->orderBy('created_at', 'desc')
             ->paginate(10);
-            
+
         return view('messages.index', compact('messages'));
     }
 
     /**
-     * Format phone number to ensure it meets requirements.
+     * Display message creation form.
      */
-    private function formatPhoneNumber($number)
+    public function create()
     {
-        $number = preg_replace('/[^0-9]/', '', $number);
-        
-        if (substr($number, 0, 2) !== '09') {
-            throw new \InvalidArgumentException('Phone number must start with 09');
+        if (!auth()->user()->is_admin) {
+            abort(403);
         }
-        
-        if (strlen($number) !== 11) {
-            throw new \InvalidArgumentException('Phone number must be 11 digits');
-        }
-        
-        return $number;
+
+        $programs = Student::select('program')->distinct()->pluck('program');
+        return view('messages.create', compact('programs'));
     }
 
     /**
-     * Calculate SMS credits needed based on message length.
+     * Store and send a message.
      */
-    private function calculateSMSCredits($message)
+    public function store(Request $request)
     {
-        $length = strlen($message);
-        
-        if ($length <= 160) {
-            return 1;
+        Log::debug('Raw request data:', $request->all());
+
+        $request->validate([
+            'type' => 'required|in:individual,group',
+            'recipient_individual' => 'required_if:type,individual',
+            'recipient_group' => 'required_if:type,group',
+            'message' => 'required|string|max:160'
+        ]);
+
+        try {
+            // Determine recipient based on type
+            $recipient = $request->type === 'individual'
+                ? $request->recipient_individual
+                : $request->recipient_group;
+
+            Log::debug('Determined recipient:', ['type' => $request->type, 'recipient' => $recipient]);
+
+            if ($request->type === 'individual') {
+                Log::debug('Processing individual message');
+                $student = Student::where('student_id', $recipient)->first();
+
+                if (!$student) {
+                    Log::warning('Student not found:', ['student_id' => $recipient]);
+                    return redirect()->back()
+                        ->with('error', 'Student not found')
+                        ->withInput();
+                }
+
+                try {
+                    Log::debug('Found student:', [
+                        'student_id' => $student->student_id,
+                        'phone' => $student->phone_number
+                    ]);
+
+                    $response = $this->vonageService->sendSMS($student->phone_number, $request->message);
+                    Log::debug('Vonage service response:', $response);
+
+                    Message::create([
+                        'sender_id' => auth()->id(),
+                        'recipient_type' => 'individual',
+                        'recipient_value' => $student->student_id,
+                        'message' => $request->message,
+                        'status' => $response['success'] ? 'sent' : 'failed: ' . ($response['error'] ?? 'unknown error')
+                    ]);
+
+                    $status = $response['success'] ? 'success' : 'error';
+                    $message = $response['message'];
+
+                    return redirect()->back()
+                        ->with($status, $message);
+                } catch (\Exception $e) {
+                    Log::error('Failed to process individual message:', [
+                        'error' => $e->getMessage(),
+                        'student_id' => $student->student_id
+                    ]);
+
+                    return redirect()->back()
+                        ->with('error', 'Failed to send message: ' . $e->getMessage())
+                        ->withInput();
+                }
+            } else {
+                // Group message handling
+                Log::debug('Processing group message:', ['program' => $request->recipient]);
+                $students = Student::where('program', $request->recipient)->get();
+
+                foreach ($students as $student) {
+                    try {
+                        $phoneNumber = $student->phone_number;
+                        $response = $this->vonageService->sendSMS($phoneNumber, $request->message);
+
+                        Message::create([
+                            'sender_id' => auth()->id(),
+                            'recipient_type' => 'group',
+                            'recipient_value' => $request->recipient,
+                            'message' => $request->message,
+                            'status' => $response['success'] ? 'sent' : 'failed: ' . ($response['error'] ?? 'unknown error')
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Failed to send message: ' . $e->getMessage());
+                        continue;
+                    }
+                }
+
+                return redirect()->back()->with('success', 'Group messages processed');
+            }
+        } catch (\Exception $e) {
+            Log::error('Exception in message store:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return redirect()->back()
+                ->with('error', 'Failed to send message: ' . $e->getMessage())
+                ->withInput();
         }
-        return ceil($length / 153); 
     }
 }
