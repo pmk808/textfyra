@@ -109,8 +109,10 @@ class MessageController extends Controller
                 }
             } else {
                 // Group message handling
-                Log::debug('Processing group message:', ['program' => $request->recipient]);
-                $students = Student::where('program', $request->recipient)->get();
+                Log::debug('Processing group message:', ['program' => $recipient]);
+                $students = Student::where('program', $recipient)->get();
+
+                Log::debug('Found students:', ['count' => $students->count()]);
 
                 foreach ($students as $student) {
                     try {
@@ -120,12 +122,15 @@ class MessageController extends Controller
                         Message::create([
                             'sender_id' => auth()->id(),
                             'recipient_type' => 'group',
-                            'recipient_value' => $request->recipient,
+                            'recipient_value' => $recipient,
                             'message' => $request->message,
                             'status' => $response['success'] ? 'sent' : 'failed: ' . ($response['error'] ?? 'unknown error')
                         ]);
                     } catch (\Exception $e) {
-                        Log::error('Failed to send message: ' . $e->getMessage());
+                        Log::error('Failed to send message:', [
+                            'error' => $e->getMessage(),
+                            'student' => $student->student_id
+                        ]);
                         continue;
                     }
                 }
